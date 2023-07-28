@@ -4,6 +4,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -123,4 +125,29 @@ func TestRateLimiter_Concurrency(t *testing.T) {
 			t.Errorf("Expected HTTP status 400 for client %s, got: %d", clientID, rec.Code)
 		}
 	}
+}
+
+// TestDockerDeployment tests the Docker container deployment
+func TestDockerDeployment(t *testing.T) {
+	var deployCmd *exec.Cmd
+
+	if runtime.GOOS == "windows" {
+		deployCmd = exec.Command("cmd", "/C", "deploy.bat")
+	} else {
+		deployCmd = exec.Command("bash", "./deploy.sh")
+	}
+
+	// Deploy the container using the appropriate script
+	err := deployCmd.Run()
+	if err != nil {
+		t.Fatalf("Error deploying the container: %v", err)
+	}
+	// Wait for the container to start
+	time.Sleep(2 * time.Second)
+
+	// Stop and remove the container after the test
+	stopCmd := exec.Command("docker", "stop", "ratelimiter-container")
+	removeCmd := exec.Command("docker", "rm", "ratelimiter-container")
+	stopCmd.Run()
+	removeCmd.Run()
 }

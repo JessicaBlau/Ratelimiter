@@ -1,0 +1,17 @@
+{
+    "clients": [
+      {
+        "ID": "client1",
+        "RequestMax": 5
+      },
+      {
+        "ID": "client2",
+        "RequestMax": 10
+      },
+      {
+        "ID": "client3",
+        "RequestMax": 20
+      }
+    ]
+  }
+  

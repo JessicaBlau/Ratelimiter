@@ -172,6 +172,13 @@ func (rl *RateLimiter) handleCustom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reset request count if it has been 1 second since the last reset
+	currentTime := time.Now()
+	if currentTime.Sub(client.LastResetTime) >= requestLimitReset {
+		client.Requests = 0
+		client.LastResetTime = currentTime
+	}
+
 	// Use the rate limiter to check if the request is allowed
 	if client.Requests >= client.RequestMax {
 		http.Error(w, "Request blocked. Too many custom requests.", http.StatusBadRequest)
@@ -182,6 +189,7 @@ func (rl *RateLimiter) handleCustom(w http.ResponseWriter, r *http.Request) {
 
 	w.Write([]byte("OK"))
 }
+
 func main() {
 	rateLimiter := NewRateLimiter()
 

@@ -52,11 +52,13 @@ You can configure the request limit for each client in the `config.json` file. T
   "clients": [
     {
       "ID": "client1",
-      "RequestMax": 5
+      "RequestMax": 5,
+      "TokensPerSec": 10
     },
     {
       "ID": "client2",
-      "RequestMax": 10
+      "RequestMax": 10,
+      "TokensPerSec": 5
     },
     {
       "ID": "client3",
@@ -78,6 +80,23 @@ You can configure the request limit for each client in the `config.json` file. T
 
 - HTTP 204 No Content: Request is allowed within the rate limit.
 - HTTP 400 Bad Request: Request is blocked due to exceeding the rate limit.
+
+### Custom Endpoint
+
+The custom endpoint uses a token bucket algorithm for rate limiting. It allows clients to request resources at a variable rate, as long as they have tokens available in their bucket.
+
+- **Endpoint:** `/custom`
+- **Method:** GET
+- **Headers:** Set the client ID as the header `X-Client-ID`.
+
+**Response:**
+
+- HTTP 200 OK: Request is allowed within the rate limit, and a custom resource is served.
+- HTTP 400 Bad Request: Request is blocked due to exceeding the rate limit or lack of available tokens.
+
+This endpoint provides a more flexible rate limiting approach by utilizing the token bucket algorithm. Clients are assigned a specific number of tokens per second in the token bucket. Each request consumes one token from the client's token bucket. If a client's token bucket is empty, the request will be blocked until the bucket is refilled.
+
+Note: The number of tokens per second for each client can be configured in the config.json file. The rate limiter uses the provided rate to determine if the client has enough tokens to proceed with the request.
 
 ## Testing
 

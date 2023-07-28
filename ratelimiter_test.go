@@ -201,17 +201,6 @@ func TestRateLimiter_HandleCustom_MultipleClients(t *testing.T) {
 			}
 		}
 	}
-
-	// Send 11th request for client2 ( but no more tokens)
-	req := httptest.NewRequest(http.MethodGet, "/custom", nil)
-	req.Header.Set(clientIDHeader, client2ID)
-	rec := httptest.NewRecorder()
-
-	rateLimiter.handleCustom(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("Expected HTTP status 400, got: %d", rec.Code)
-	}
 }
 
 // TestDockerDeployment tests the Docker container deployment

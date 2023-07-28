@@ -2,11 +2,13 @@
     "clients": [
       {
         "ID": "client1",
-        "RequestMax": 5
+        "RequestMax": 5,
+        "TokensPerSec": 10
       },
       {
         "ID": "client2",
-        "RequestMax": 10
+        "RequestMax": 10,
+        "TokensPerSec": 5
       },
       {
         "ID": "client3",

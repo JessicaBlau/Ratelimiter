@@ -2,6 +2,7 @@
 package main
 
 import (
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -124,6 +125,92 @@ func TestRateLimiter_Concurrency(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("Expected HTTP status 400 for client %s, got: %d", clientID, rec.Code)
 		}
+	}
+}
+
+func TestRateLimiter_HandleCustom(t *testing.T) {
+	rateLimiter := NewRateLimiter()
+
+	// Test with client1
+	clientID := "client1"
+
+	// Send 5 requests (within limit)
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
+		req.Header.Set(clientIDHeader, clientID)
+		rec := httptest.NewRecorder()
+
+		rateLimiter.handleCustom(rec, req)
+
+		if rec.Code != http.StatusOK {
+			client := rateLimiter.getClient(clientID)
+			t.Log(client.RateLimiter.Available(), client.Requests)
+			t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
+		}
+	}
+
+	// Send 6th request (exceeding the limit)
+	req := httptest.NewRequest(http.MethodGet, "/custom", nil)
+	req.Header.Set(clientIDHeader, clientID)
+	rec := httptest.NewRecorder()
+
+	rateLimiter.handleCustom(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected HTTP status 400, got: %d", rec.Code)
+	}
+
+}
+
+func TestRateLimiter_HandleCustom_MultipleClients(t *testing.T) {
+	rateLimiter := NewRateLimiter()
+
+	// Test with client1
+	client1ID := "client1"
+
+	// Send 5 requests for client1 (within limit)
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
+		req.Header.Set(clientIDHeader, client1ID)
+		rec := httptest.NewRecorder()
+
+		rateLimiter.handleCustom(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
+		}
+	}
+
+	// Test with client2
+	client2ID := "client2"
+
+	// Send 10 requests for client2 (within limit) but not enough tokens
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
+		req.Header.Set(clientIDHeader, client2ID)
+		rec := httptest.NewRecorder()
+
+		rateLimiter.handleCustom(rec, req)
+
+		if rec.Code != http.StatusOK {
+			body, _ := ioutil.ReadAll(rec.Body)
+			errorMessage := string(body)
+			// to do: change to a binary variable and not a string
+			if errorMessage != "Request blocked. No more tokens.\n" {
+				t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
+			}
+		}
+	}
+
+	// Send 11th request for client2 ( but no more tokens)
+	req := httptest.NewRequest(http.MethodGet, "/custom", nil)
+	req.Header.Set(clientIDHeader, client2ID)
+	rec := httptest.NewRecorder()
+
+	rateLimiter.handleCustom(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected HTTP status 400, got: %d", rec.Code)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/juju/ratelimit"
 )
 
 const (
@@ -23,6 +25,7 @@ type Client struct {
 	Requests      int
 	RequestMutex  sync.Mutex
 	LastResetTime time.Time
+	RateLimiter   *ratelimit.Bucket // Custom rate limiter for each client
 }
 
 // Configuration represents the configuration structure
@@ -32,8 +35,9 @@ type Configuration struct {
 
 // ClientConfig represents the client configuration structure
 type ClientConfig struct {
-	ID         string `json:"ID"`
-	RequestMax int    `json:"RequestMax"`
+	ID           string `json:"ID"`
+	RequestMax   int    `json:"RequestMax"`
+	TokensPerSec int    `json:"TokensPerSec"`
 }
 
 // RateLimiter is the main rate limiter service
@@ -77,15 +81,16 @@ func (rl *RateLimiter) getClient(clientID string) *Client {
 			// Set a default request limit if the config file cannot be loaded
 			config = &Configuration{
 				Clients: []ClientConfig{
-					{ID: clientID, RequestMax: 10}, // Default request limit per second (adjust as desired)
+					{ID: clientID, RequestMax: 10, TokensPerSec: 5}, // Default request limit and tokens per second (adjust as desired)
 				},
 			}
 		}
 
-		var requestMax int
+		var requestMax, tokensPerSec int
 		for _, clientConfig := range config.Clients {
 			if clientConfig.ID == clientID {
 				requestMax = clientConfig.RequestMax
+				tokensPerSec = clientConfig.TokensPerSec
 				break
 			}
 		}
@@ -95,11 +100,18 @@ func (rl *RateLimiter) getClient(clientID string) *Client {
 			requestMax = 10 // Default request limit per second (adjust as desired)
 		}
 
+		if tokensPerSec == 0 {
+			// Set a default tokens per second if not found in the config
+			tokensPerSec = 5 // Default tokens per second (adjust as desired)
+		}
+
 		client = &Client{
 			ID:            clientID,
 			RequestMax:    requestMax,
 			Requests:      0,
+			RequestMutex:  sync.Mutex{},
 			LastResetTime: time.Now(),
+			RateLimiter:   ratelimit.NewBucket(time.Second/time.Duration(tokensPerSec), int64(tokensPerSec)),
 		}
 		rl.clients[clientID] = client
 	}
@@ -140,10 +152,41 @@ func (rl *RateLimiter) handleLimit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleCustom handles the "/custom" endpoint with custom rate limiter logic
+func (rl *RateLimiter) handleCustom(w http.ResponseWriter, r *http.Request) {
+	clientID := r.Header.Get(clientIDHeader)
+	if clientID == "" {
+		http.Error(w, "X-Client-ID header missing", http.StatusBadRequest)
+		return
+	}
+
+	client := rl.getClient(clientID)
+
+	// Acquire the request mutex to ensure thread safety
+	client.RequestMutex.Lock()
+	defer client.RequestMutex.Unlock()
+
+	// Check if the client's token bucket allows the request
+	if client.RateLimiter.TakeAvailable(1) == 0 {
+		http.Error(w, "Request blocked. No more tokens.", http.StatusBadRequest)
+		return
+	}
+
+	// Use the rate limiter to check if the request is allowed
+	if client.Requests >= client.RequestMax {
+		http.Error(w, "Request blocked. Too many custom requests.", http.StatusBadRequest)
+		return
+	}
+
+	client.Requests++
+
+	w.Write([]byte("OK"))
+}
 func main() {
 	rateLimiter := NewRateLimiter()
 
 	http.HandleFunc("/limit", rateLimiter.handleLimit)
+	http.HandleFunc("/custom", rateLimiter.handleCustom)
 
 	fmt.Println("Rate Limiter is running on http://localhost:8080/limit")
 	http.ListenAndServe(":8080", nil)

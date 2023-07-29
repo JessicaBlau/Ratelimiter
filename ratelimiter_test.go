@@ -2,6 +2,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -129,78 +131,192 @@ func TestRateLimiter_Concurrency(t *testing.T) {
 }
 
 func TestRateLimiter_HandleCustom(t *testing.T) {
-	rateLimiter := NewRateLimiter()
+	// Create a new rate limiter
+	rl := NewRateLimiter()
 
-	// Test with client1
-	clientID := "client1"
+	// Set up a test server
+	ts := httptest.NewServer(http.HandlerFunc(rl.handleCustom))
+	defer ts.Close()
 
-	// Send 5 requests (within limit)
-	for i := 0; i < 5; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
-		req.Header.Set(clientIDHeader, clientID)
-		rec := httptest.NewRecorder()
+	// Create a request to test
+	req, err := http.NewRequest("GET", ts.URL, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
 
-		rateLimiter.handleCustom(rec, req)
+	// Test case 1: Missing X-Client-ID header
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to send request: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status code %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
 
-		if rec.Code != http.StatusOK {
-			client := rateLimiter.getClient(clientID)
-			t.Log(client.RateLimiter.Available(), client.Requests)
-			t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
+	// Set the X-Client-ID header for the test request
+	req.Header.Set(clientIDHeader, "client1")
+
+	// Test case 2: Valid request with available tokens
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to send request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	// Test case 3: Exceed the token limit
+	for i := 0; i < 10; i++ {
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("failed to send request: %v", err)
 		}
 	}
-
-	// Send 6th request (exceeding the limit)
-	req := httptest.NewRequest(http.MethodGet, "/custom", nil)
-	req.Header.Set(clientIDHeader, clientID)
-	rec := httptest.NewRecorder()
-
-	rateLimiter.handleCustom(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("Expected HTTP status 400, got: %d", rec.Code)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status code %d, got %d", http.StatusBadRequest, resp.StatusCode)
 	}
 
+	// Test case 4: Wait for the rate limiter to reset and allow more requests
+	time.Sleep(requestLimitReset)
+
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to send request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
 }
 
 func TestRateLimiter_HandleCustom_MultipleClients(t *testing.T) {
-	rateLimiter := NewRateLimiter()
-
-	// Test with client1
-	client1ID := "client1"
-
-	// Send 5 requests for client1 (within limit)
-	for i := 0; i < 5; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
-		req.Header.Set(clientIDHeader, client1ID)
-		rec := httptest.NewRecorder()
-
-		rateLimiter.handleCustom(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
-		}
+	// Load the configuration from the config.json file
+	configJSON, err := ioutil.ReadFile("config.json")
+	if err != nil {
+		t.Fatalf("failed to read config.json file: %v", err)
 	}
 
-	// Test with client2
-	client2ID := "client2"
+	var config Configuration
+	err = json.Unmarshal(configJSON, &config)
+	if err != nil {
+		t.Fatalf("failed to load configuration: %v", err)
+	}
 
-	// Send 10 requests for client2 (within limit) but not enough tokens
-	for i := 0; i < 10; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/custom", nil)
-		req.Header.Set(clientIDHeader, client2ID)
-		rec := httptest.NewRecorder()
+	// Create a new rate limiter with the loaded configuration
+	rl := NewRateLimiterWithConfig(config)
 
-		rateLimiter.handleCustom(rec, req)
+	// Set up a test server
+	ts := httptest.NewServer(http.HandlerFunc(rl.handleCustom))
+	defer ts.Close()
 
-		if rec.Code != http.StatusOK {
-			body, _ := ioutil.ReadAll(rec.Body)
-			errorMessage := string(body)
-			// to do: change to a binary variable and not a string
-			if errorMessage != "Request blocked. No more tokens.\n" {
-				t.Errorf("Expected HTTP status 200, got: %d", rec.Code)
+	// Define the number of concurrent requests
+	numRequests := 100
+
+	// Run the first test to use up all the allowed requests for each client
+	runTest(t, ts, config, numRequests)
+
+	// Run the second set of requests without waiting, which is expected to fail
+	runTestFail(t, ts, config, numRequests)
+}
+
+func runTest(t *testing.T, ts *httptest.Server, config Configuration, numRequests int) {
+	// Create a wait group to synchronize the goroutines
+	var wg sync.WaitGroup
+	wg.Add(numRequests)
+
+	// Send concurrent requests from multiple clients
+	for i := 0; i < numRequests; i++ {
+		clientID := fmt.Sprintf("client%d", i%3+1) // client1, client2, client3
+
+		// Create a new request to test
+		req, err := http.NewRequest("GET", ts.URL, nil)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		req.Header.Set(clientIDHeader, clientID)
+
+		// Start a new goroutine for each request
+		go func() {
+			defer wg.Done()
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("failed to send request: %v", err)
 			}
-		}
+
+			if resp.StatusCode == http.StatusOK {
+				t.Logf("%s: Request allowed", clientID)
+			} else {
+				t.Errorf("%s: Request blocked. Status code: %d", clientID, resp.StatusCode)
+			}
+		}()
+
+		// Add a delay between requests to simulate concurrent behavior
+		time.Sleep(time.Second / time.Duration(config.Clients[i%3].TokensPerSec))
 	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+}
+
+func runTestFail(t *testing.T, ts *httptest.Server, config Configuration, numRequests int) {
+
+	// Extract allowed request rate from the config
+	allowedRequestsPerSecond := make(map[string]int)
+	for _, clientConfig := range config.Clients {
+		allowedRequestsPerSecond[clientConfig.ID] = clientConfig.RequestMax
+	}
+
+	// Create a wait group to synchronize the goroutines
+	var wg sync.WaitGroup
+	wg.Add(numRequests)
+
+	// Send concurrent requests from multiple clients
+	for i := 0; i < numRequests; i++ {
+		clientID := fmt.Sprintf("client%d", i%3+1) // client1, client2, client3
+
+		// Get the allowed rate for this client from the config
+		allowedRate := allowedRequestsPerSecond[clientID]
+
+		// Create a new request to test
+		req, err := http.NewRequest("GET", ts.URL, nil)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		req.Header.Set(clientIDHeader, clientID)
+
+		// Start a new goroutine for each request
+		go func() {
+			defer wg.Done()
+
+			flag := false
+			// Send multiple requests to exceed the allowed rate
+			for j := 0; j < allowedRate*2; j++ {
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("failed to send request: %v", err)
+				}
+
+				// Ensure the response body is read to reuse the connection
+				// and allow subsequent requests to be processed.
+				resp.Body.Close()
+
+				// If the response status code is http.StatusBadRequest, it means the request was blocked by the rate limiter
+				if resp.StatusCode == http.StatusBadRequest && j >= allowedRate {
+					flag = true
+					t.Logf("%s: Request blocked", clientID)
+				}
+			}
+			// failed if it did not reach a block
+			if !flag {
+				t.Errorf("%s: Request was not blocked.", clientID)
+			}
+		}()
+	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
 }
 
 // TestDockerDeployment tests the Docker container deployment

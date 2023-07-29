@@ -53,6 +53,27 @@ func NewRateLimiter() *RateLimiter {
 	}
 }
 
+// NewRateLimiter creates a new RateLimiter with the given configuration
+func NewRateLimiterWithConfig(config Configuration) *RateLimiter {
+	rl := &RateLimiter{
+		clients: make(map[string]*Client),
+	}
+
+	for _, clientConfig := range config.Clients {
+		bucket := ratelimit.NewBucketWithRate(float64(clientConfig.TokensPerSec), int64(clientConfig.RequestMax))
+		client := &Client{
+			ID:            clientConfig.ID,
+			RequestMax:    clientConfig.RequestMax,
+			Requests:      0,
+			LastResetTime: time.Now(),
+			RateLimiter:   bucket,
+		}
+		rl.clients[clientConfig.ID] = client
+	}
+
+	return rl
+}
+
 // LoadConfig loads the configuration from the configFile
 func LoadConfig() (*Configuration, error) {
 	data, err := ioutil.ReadFile(configFile)
@@ -171,21 +192,6 @@ func (rl *RateLimiter) handleCustom(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request blocked. No more tokens.", http.StatusBadRequest)
 		return
 	}
-
-	// Reset request count if it has been 1 second since the last reset
-	currentTime := time.Now()
-	if currentTime.Sub(client.LastResetTime) >= requestLimitReset {
-		client.Requests = 0
-		client.LastResetTime = currentTime
-	}
-
-	// Use the rate limiter to check if the request is allowed
-	if client.Requests >= client.RequestMax {
-		http.Error(w, "Request blocked. Too many custom requests.", http.StatusBadRequest)
-		return
-	}
-
-	client.Requests++
 
 	w.Write([]byte("OK"))
 }

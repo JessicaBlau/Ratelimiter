@@ -12,7 +12,8 @@
     },
     {
       "ID": "client3",
-      "RequestMax": 20
+      "RequestMax": 20,
+      "TokensPerSec": 3
     }
   ]
 }

@@ -4,7 +4,8 @@ Ratelimiter is a simple API service written in GoLang that implements a basic ra
 
 ## Features
 
-- Single endpoint `/limit` for rate limiting.
+- Endpoint `/limit` for rate limiting.
+- Endpoint `/custom` for custom limiting.
 - Supports multiple clients, each with its own unique ID.
 - Configuration file to define the request limit for each client.
 - Requests are rate-limited and reset every second.
@@ -12,6 +13,36 @@ Ratelimiter is a simple API service written in GoLang that implements a basic ra
 - Concurrency handling to ensure thread-safety.
 - Test coverage for basic functionality and concurrency scenarios.
 - Dockerfile and deployment script for containerization.
+
+### Custom Rate Limiter Endpoint (/custom)
+
+#### Overview
+
+The custom rate limiter endpoint (/custom) is an additional feature offered by the service to handle rate limiting for specific clients with unique requirements. It allows clients to make requests with their unique client ID included in the X-Client-ID header. The rate limiting logic for this endpoint differs from the standard endpoint, enabling customized rate limits based on individual client needs.
+
+## How It Works
+
+1. Clients make requests to the /custom endpoint and include their unique client ID in the X-Client-ID header.
+
+2. The rate limiter performs the following steps to handle the request:
+   - The rate limiter checks if the client's token bucket allows the request to proceed. The token bucket algorithm is a popular method used for rate limiting. It ensures that clients receive tokens at a certain rate and can only make requests if they have available tokens.
+   - If the client has exceeded the rate limit (i.e., no more tokens available in their bucket), the service responds with a 400 Bad Request status code and the message "Request blocked. No more tokens."
+   - If the request is allowed (i.e., the client has available tokens), the service responds with a 200 OK status code and the message "OK."
+
+## Usage Example (Assuming Go Programming Language)
+
+Assuming you have an instance of the RateLimiter struct named `rateLimiter`:
+
+```go
+// Handle the custom endpoint with custom rate limiter logic
+http.HandleFunc("/custom", rateLimiter.handleCustom)
+```
+
+In this usage example, an instance of the `RateLimiter` struct named `rateLimiter` is utilized to handle the custom endpoint. The actual implementation of the `handleCustom` function within the `RateLimiter` struct will handle the rate limiting logic specific to the /custom endpoint and client ID provided in the X-Client-ID header.
+
+## Benefits
+
+The custom rate limiter endpoint offers more flexibility in managing different clients' request rates. It allows the service to accommodate specific client requirements by tailoring the rate limiting behavior to their needs. This feature is useful when certain clients need higher or lower rate limits compared to the standard rate limiting rules. By providing custom rate limits, the service can ensure a fair distribution of resources while meeting the varying demands of its clients.
 
 ## How to Use
 
@@ -62,7 +93,8 @@ You can configure the request limit for each client in the `config.json` file. T
     },
     {
       "ID": "client3",
-      "RequestMax": 20
+      "RequestMax": 20,
+      "TokensPerSec": 3
     }
   ]
 }
